@@ -61,14 +61,15 @@ def markdown_to_html(md_text: str) -> str:
 </body>
 </html>"""
 
-    return full_html
+    # 4. Compactar en una sola línea (evita problemas en n8n)
+    return " ".join(full_html.split())
 
 
 @app.post("/html")
 def make_html():
     """
     Endpoint principal: recibe JSON con {"markdown": "..."}
-    y devuelve HTML completo con MathJax y CSS.
+    y devuelve HTML completo (una sola línea) con MathJax y CSS.
     """
     data = request.get_json(silent=True)
     if not data or "markdown" not in data:
@@ -76,9 +77,6 @@ def make_html():
 
     md_text = data["markdown"]
     html = markdown_to_html(md_text)
-
-    # Compactar en una sola línea si quieres evitar problemas en n8n:
-    # html = " ".join(html.split())
 
     return Response(html, mimetype="text/html")
 
