@@ -10,24 +10,22 @@ MATH_INLINE_RE = re.compile(r'\$(.+?)\$')            # $...$
 
 def protect_math(md_text: str):
     """
-    Sustituye las fórmulas por marcadores temporales para que
+    Sustituye las fórmulas por marcadores seguros para que
     markdown.markdown no las rompa.
     """
     formulas = {}
     counter = 0
 
-    # Bloques
     def repl_block(m):
         nonlocal counter
-        key = f"__MATHBLOCK{counter}__"
+        key = f"§§MATHBLOCK{counter}§§"
         formulas[key] = f"\\[{m.group(1).strip()}\\]"
         counter += 1
         return key
 
-    # Inline
     def repl_inline(m):
         nonlocal counter
-        key = f"__MATHINLINE{counter}__"
+        key = f"§§MATHINLINE{counter}§§"
         formulas[key] = f"\\({m.group(1).strip()}\\)"
         counter += 1
         return key
@@ -44,6 +42,9 @@ def restore_math(html: str, formulas: dict):
     return html
 
 def markdown_to_html(md_text: str) -> str:
+    # 0. Asegurar saltos de línea reales
+    md_text = md_text.replace("\\n", "\n")
+
     # 1. Proteger fórmulas
     md_text, formulas = protect_math(md_text)
 
@@ -63,22 +64,13 @@ def markdown_to_html(md_text: str) -> str:
     # 3. Restaurar fórmulas
     body_html = restore_math(body_html, formulas)
 
-    # 4. Envolver en HTML completo + MathJax + CSS
+    # 4. Envolver en HTML completo + MathJax
     full_html = f"""<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
   <title>Markdown a HTML</title>
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
-  <style>
-    table, th, td {{
-      border: 1px solid black;
-      border-collapse: collapse;
-    }}
-    th, td {{
-      padding: 4px;
-    }}
-  </style>
 </head>
 <body>
 {body_html}
