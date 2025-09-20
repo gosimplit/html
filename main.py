@@ -16,12 +16,10 @@ def markdown_to_html(md_text: str) -> str:
     """
 
     # --- Paso 1: transformar fórmulas ---
-    # Bloques con $$ ... $$
     md_text = MATH_BLOCK_RE.sub(
         lambda m: convert(m.group(1).replace("\n", " ")),
         md_text
     )
-    # Inline con $ ... $
     md_text = MATH_INLINE_RE.sub(
         lambda m: convert(m.group(1)),
         md_text
@@ -31,13 +29,16 @@ def markdown_to_html(md_text: str) -> str:
     html = markdown.markdown(
         md_text,
         extensions=[
-            "tables",        # soporte de tablas
-            "fenced_code",   # bloques de código con ```
-            "sane_lists",    # listas mejoradas
-            "nl2br",         # saltos de línea automáticos
-            "toc"            # tabla de contenidos opcional
+            "tables",
+            "fenced_code",
+            "sane_lists",
+            "nl2br",
+            "toc"
         ]
     )
+
+    # --- Paso 3: Compactar en una sola línea ---
+    html = " ".join(html.split())
 
     return html
 
@@ -46,7 +47,7 @@ def markdown_to_html(md_text: str) -> str:
 def make_html():
     """
     Endpoint principal: recibe JSON con {"markdown": "..."}
-    y devuelve HTML renderizado con MathML.
+    y devuelve HTML en una sola línea con MathML.
     """
     data = request.get_json(silent=True)
     if not data or "markdown" not in data:
@@ -57,5 +58,4 @@ def make_html():
 
     return Response(html, mimetype="text/html")
 
-# ⚠️ Importante:
-# NO usamos app.run() aquí porque Render lo ejecutará con Gunicorn.
+# ⚠️ Nota: Render levantará esto con gunicorn main:app
