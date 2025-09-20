@@ -1,53 +1,74 @@
 import re
 import markdown
 from flask import Flask, request, jsonify, Response
-from latex2mathml.converter import convert
 
 app = Flask(__name__)
 
-# Regex para fórmulas LaTeX en Markdown
-MATH_INLINE_RE = re.compile(r'\$(.+?)\$')
-MATH_BLOCK_RE  = re.compile(r'\$\$(.+?)\$\$')
+# Regex para ecuaciones LaTeX
+MATH_BLOCK_RE = re.compile(r'\$\$(.+?)\$\$', re.S)   # $$...$$
+MATH_INLINE_RE = re.compile(r'\$(.+?)\$')            # $...$
+
+def replace_math(md_text: str) -> str:
+    """
+    Sustituye las ecuaciones LaTeX para que se rendericen con MathJax:
+    - $...$   → \( ... \)
+    - $$...$$ → \[ ... \]
+    """
+    md_text = MATH_BLOCK_RE.sub(lambda m: f"\\\\[{m.group(1).strip()}\\\\]", md_text)
+    md_text = MATH_INLINE_RE.sub(lambda m: f"\\\\({m.group(1).strip()}\\\\)", md_text)
+    return md_text
 
 def markdown_to_html(md_text: str) -> str:
     """
-    Convierte Markdown a HTML con soporte extendido y
-    transformación de fórmulas LaTeX ($...$, $$...$$) a MathML.
+    Convierte Markdown a HTML completo con soporte de tablas, código,
+    tachado, listas, citas y ecuaciones LaTeX via MathJax.
     """
+    # 1. Sustituir fórmulas LaTeX
+    md_text = replace_math(md_text)
 
-    # --- Paso 1: transformar fórmulas ---
-    md_text = MATH_BLOCK_RE.sub(
-        lambda m: convert(m.group(1).replace("\n", " ")),
-        md_text
-    )
-    md_text = MATH_INLINE_RE.sub(
-        lambda m: convert(m.group(1)),
-        md_text
-    )
-
-    # --- Paso 2: Markdown -> HTML ---
-    html = markdown.markdown(
+    # 2. Markdown -> HTML (fragmento)
+    body_html = markdown.markdown(
         md_text,
         extensions=[
-            "tables",
-            "fenced_code",
-            "sane_lists",
-            "nl2br",
-            "toc"
+            "tables",        # tablas
+            "fenced_code",   # bloques de código ```
+            "sane_lists",    # listas consistentes
+            "nl2br",         # saltos de línea automáticos
+            "toc",           # tabla de contenidos
+            "pymdownx.tilde" # ~~tachado~~
         ]
     )
 
-    # --- Paso 3: Compactar en una sola línea ---
-    html = " ".join(html.split())
+    # 3. Envolver en HTML completo con CSS + MathJax
+    full_html = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Markdown a HTML</title>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+  <style>
+    table, th, td {{
+      border: 1px solid black;
+      border-collapse: collapse;
+    }}
+    th, td {{
+      padding: 4px;
+    }}
+  </style>
+</head>
+<body>
+{body_html}
+</body>
+</html>"""
 
-    return html
+    return full_html
 
 
 @app.post("/html")
 def make_html():
     """
     Endpoint principal: recibe JSON con {"markdown": "..."}
-    y devuelve HTML en una sola línea con MathML.
+    y devuelve HTML completo con MathJax y CSS.
     """
     data = request.get_json(silent=True)
     if not data or "markdown" not in data:
@@ -56,6 +77,10 @@ def make_html():
     md_text = data["markdown"]
     html = markdown_to_html(md_text)
 
+    # Compactar en una sola línea si quieres evitar problemas en n8n:
+    # html = " ".join(html.split())
+
     return Response(html, mimetype="text/html")
 
-# ⚠️ Nota: Render levantará esto con gunicorn main:app
+# ⚠️ Nota: En Render se ejecuta con Gunicorn, ejemplo:
+# gunicorn -w 4 -b 0.0.0.0:$PORT main:app
