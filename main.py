@@ -4,54 +4,47 @@ from flask import Flask, request, jsonify, Response
 
 app = Flask(__name__)
 
-# Regex LaTeX
-MATH_BLOCK_RE = re.compile(r'\$\$(.+?)\$\$', re.S)   # $$...$$ (multilínea)
-MATH_INLINE_RE = re.compile(r'\$(.+?)\$')            # $...$ (inline)
+# Regex para LaTeX
+MATH_BLOCK_RE = re.compile(r'\$\$(.+?)\$\$', re.S)
+MATH_INLINE_RE = re.compile(r'\$(.+?)\$')
 
-# Detectores de cabeceras / etiquetas de bloque tipo "Python:" / "JSON:"
-HEADING_LINE_RE = re.compile(r'^\s*#{1,6}\s+')
-LABEL_LINE_RE   = re.compile(r'^[A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñ]*:\s*$')
+# Regex para bloques de código ```...```
+CODEBLOCK_RE = re.compile(r'```.*?```', re.S)
 
-def autofence_code_blocks(md_text: str) -> str:
+
+def extract_codeblocks(md_text: str):
     """
-    Convierte secciones que empiezan por 'Python:' o 'JSON:' (sin ``` explícitos)
-    en bloques de código con fenced_code. Termina al encontrar línea vacía,
-    otra etiqueta tipo X:, o una cabecera Markdown.
+    Extrae bloques de código (```...```) y los reemplaza por marcadores
+    para evitar que protect_math los toque.
     """
-    lines = md_text.splitlines()
-    out = []
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        stripped = line.strip()
-        if stripped in ("Python:", "JSON:"):
-            lang = "python" if stripped == "Python:" else "json"
-            # capturar hasta corte
-            j = i + 1
-            block = []
-            while j < len(lines):
-                nxt = lines[j]
-                if not nxt.strip():  # línea en blanco => fin de bloque
-                    break
-                if HEADING_LINE_RE.match(nxt):  # nueva cabecera
-                    break
-                if LABEL_LINE_RE.match(nxt.strip()):  # otra etiqueta X:
-                    break
-                block.append(nxt)
-                j += 1
-            # envolver en fenced code
-            code = "\n".join(block).strip()
-            out.append(f"```{lang}\n{code}\n```")
-            i = j  # saltar bloque
-            continue
-        out.append(line)
-        i += 1
-    return "\n".join(out)
+    codeblocks = {}
+    counter = 0
+
+    def repl(m):
+        nonlocal counter
+        key = f"§§CODE{counter}§§"
+        codeblocks[key] = m.group(0)
+        counter += 1
+        return key
+
+    md_text = CODEBLOCK_RE.sub(repl, md_text)
+    return md_text, codeblocks
+
+
+def restore_codeblocks(html: str, codeblocks: dict):
+    """Restaura los bloques de código en el HTML final."""
+    for key, block in codeblocks.items():
+        # markdown ya convierte ```...``` en <pre><code>...</code></pre>,
+        # así que insertamos directamente el bloque original para que
+        # fenced_code se encargue del renderizado.
+        block_html = markdown.markdown(block, extensions=["fenced_code"])
+        html = html.replace(key, block_html)
+    return html
+
 
 def protect_math(md_text: str):
     """
-    Sustituye fórmulas por marcadores seguros para que markdown no las altere.
-    Luego las repondremos tal cual con \(..\) y \[..\] (MathJax).
+    Protege ecuaciones LaTeX reemplazándolas por marcadores seguros.
     """
     formulas = {}
     counter = 0
@@ -74,29 +67,32 @@ def protect_math(md_text: str):
     md_text = MATH_INLINE_RE.sub(repl_inline, md_text)
     return md_text, formulas
 
-def restore_math(html: str, formulas: dict) -> str:
+
+def restore_math(html: str, formulas: dict):
+    """Restaura ecuaciones LaTeX en el HTML final."""
     for key, formula in formulas.items():
         html = html.replace(key, formula)
     return html
 
+
 def markdown_to_html(md_text: str) -> str:
     """
-    Convierte Markdown a HTML completo con:
-      - Tablas, listas, código, citas, tachado
-      - LaTeX protegido y rendereable con MathJax
-      - CSS inline para bordes de tabla
-      - TODO en una sola línea
+    Convierte Markdown a HTML completo con soporte de:
+    - Tablas con bordes
+    - Checklist como casillas reales
+    - Bloques de código intactos
+    - Ecuaciones LaTeX protegidas (MathJax)
     """
-    # 0) Normalizar saltos (JSON suele venir con \\n)
+    # Normalizar saltos
     md_text = md_text.replace("\r\n", "\n").replace("\r", "\n").replace("\\n", "\n")
 
-    # 1) Auto-fence para bloques "Python:" / "JSON:"
-    md_text = autofence_code_blocks(md_text)
+    # 1) Extraer bloques de código
+    md_text, codeblocks = extract_codeblocks(md_text)
 
-    # 2) Proteger fórmulas LaTeX con marcadores seguros
+    # 2) Proteger fórmulas LaTeX
     md_text, formulas = protect_math(md_text)
 
-    # 3) Markdown -> HTML (fragmento)
+    # 3) Procesar Markdown
     body_html = markdown.markdown(
         md_text,
         extensions=[
@@ -105,14 +101,21 @@ def markdown_to_html(md_text: str) -> str:
             "sane_lists",
             "nl2br",
             "toc",
-            "pymdownx.tilde",   # ~~tachado~~
-        ]
+            "pymdownx.tilde",    # ~~tachado~~
+            "pymdownx.tasklist"  # checklists como <input>
+        ],
+        extension_configs={
+            "pymdownx.tasklist": {
+                "custom_checkbox": True
+            }
+        }
     )
 
-    # 4) Restaurar fórmulas ( \(..\) y \[..\] para MathJax )
+    # 4) Restaurar fórmulas y bloques de código
     body_html = restore_math(body_html, formulas)
+    body_html = restore_codeblocks(body_html, codeblocks)
 
-    # 5) Envolver documento + CSS de bordes en tablas + MathJax
+    # 5) Envolver en HTML completo + CSS tablas + MathJax
     full_html = f"""<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -129,17 +132,21 @@ def markdown_to_html(md_text: str) -> str:
 </body>
 </html>"""
 
-    # 6) Devolver en UNA SOLA LÍNEA (compat n8n)
+    # 6) Compactar en una sola línea
     return " ".join(full_html.split())
+
 
 @app.post("/html")
 def make_html():
     data = request.get_json(silent=True)
     if not data or "markdown" not in data:
         return jsonify({"error": "Bad request: falta 'markdown'"}), 400
+
     md_text = data["markdown"]
     html = markdown_to_html(md_text)
+
     return Response(html, mimetype="text/html")
 
-# En Render lánzalo con:
+
+# Render lo lanza con:
 # gunicorn -w 4 -b 0.0.0.0:$PORT main:app
