@@ -23,7 +23,7 @@ def extract_codeblocks(md_text: str):
     def repl(m):
         nonlocal counter
         key = f"§§CODE{counter}§§"
-        codeblocks[key] = m.group(0)
+        codeblocks[key] = m.group(0)  # guardamos el bloque completo
         counter += 1
         return key
 
@@ -34,9 +34,6 @@ def extract_codeblocks(md_text: str):
 def restore_codeblocks(html: str, codeblocks: dict):
     """Restaura los bloques de código en el HTML final."""
     for key, block in codeblocks.items():
-        # markdown ya convierte ```...``` en <pre><code>...</code></pre>,
-        # así que insertamos directamente el bloque original para que
-        # fenced_code se encargue del renderizado.
         block_html = markdown.markdown(block, extensions=["fenced_code"])
         html = html.replace(key, block_html)
     return html
@@ -100,9 +97,8 @@ def markdown_to_html(md_text: str) -> str:
             "fenced_code",
             "sane_lists",
             "nl2br",
-            "toc",
-            "pymdownx.tilde",    # ~~tachado~~
-            "pymdownx.tasklist"  # checklists como <input>
+            "pymdownx.tilde",     # ~~tachado~~
+            "pymdownx.tasklist"   # checklists
         ],
         extension_configs={
             "pymdownx.tasklist": {
