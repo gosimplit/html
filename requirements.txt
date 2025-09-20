@@ -1,4 +1,4 @@
 flask
 Markdown
-latex2mathml
+pymdown-extensions
 gunicorn
