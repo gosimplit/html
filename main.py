@@ -1,8 +1,6 @@
 import re
 import markdown
-from flask import Flask, request, jsonify, Response, send_file
-import io
-import asyncio
+from flask import Flask, request, jsonify, Response
 
 app = Flask(__name__)
 
@@ -15,13 +13,17 @@ CODEBLOCK_RE = re.compile(r'```.*?```', re.S)
 
 
 def extract_codeblocks(md_text: str):
+    """
+    Extrae bloques de código (```...```) y los reemplaza por marcadores
+    para evitar que protect_math los toque.
+    """
     codeblocks = {}
     counter = 0
 
     def repl(m):
         nonlocal counter
         key = f"§§CODE{counter}§§"
-        codeblocks[key] = m.group(0)
+        codeblocks[key] = m.group(0)  # guardamos el bloque completo
         counter += 1
         return key
 
@@ -30,6 +32,7 @@ def extract_codeblocks(md_text: str):
 
 
 def restore_codeblocks(html: str, codeblocks: dict):
+    """Restaura los bloques de código en el HTML final."""
     for key, block in codeblocks.items():
         block_html = markdown.markdown(block, extensions=["fenced_code"])
         html = html.replace(key, block_html)
@@ -37,6 +40,9 @@ def restore_codeblocks(html: str, codeblocks: dict):
 
 
 def protect_math(md_text: str):
+    """
+    Protege ecuaciones LaTeX reemplazándolas por marcadores seguros.
+    """
     formulas = {}
     counter = 0
 
@@ -60,16 +66,30 @@ def protect_math(md_text: str):
 
 
 def restore_math(html: str, formulas: dict):
+    """Restaura ecuaciones LaTeX en el HTML final."""
     for key, formula in formulas.items():
         html = html.replace(key, formula)
     return html
 
 
 def markdown_to_html(md_text: str) -> str:
+    """
+    Convierte Markdown a HTML completo con soporte de:
+    - Tablas con bordes
+    - Checklist como casillas reales
+    - Bloques de código intactos
+    - Ecuaciones LaTeX protegidas (MathJax)
+    """
+    # Normalizar saltos
     md_text = md_text.replace("\r\n", "\n").replace("\r", "\n").replace("\\n", "\n")
+
+    # 1) Extraer bloques de código
     md_text, codeblocks = extract_codeblocks(md_text)
+
+    # 2) Proteger fórmulas LaTeX
     md_text, formulas = protect_math(md_text)
 
+    # 3) Procesar Markdown
     body_html = markdown.markdown(
         md_text,
         extensions=[
@@ -77,8 +97,8 @@ def markdown_to_html(md_text: str) -> str:
             "fenced_code",
             "sane_lists",
             "nl2br",
-            "pymdownx.tilde",
-            "pymdownx.tasklist"
+            "pymdownx.tilde",     # ~~tachado~~
+            "pymdownx.tasklist"   # checklists
         ],
         extension_configs={
             "pymdownx.tasklist": {
@@ -87,9 +107,11 @@ def markdown_to_html(md_text: str) -> str:
         }
     )
 
+    # 4) Restaurar fórmulas y bloques de código
     body_html = restore_math(body_html, formulas)
     body_html = restore_codeblocks(body_html, codeblocks)
 
+    # 5) Envolver en HTML completo + CSS tablas + MathJax
     full_html = f"""<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -99,8 +121,6 @@ def markdown_to_html(md_text: str) -> str:
   <style>
     table, th, td {{ border: 1px solid black; border-collapse: collapse; }}
     th, td {{ padding: 4px; }}
-    @page {{ size: A4; margin: 18mm; }}
-    .page-break {{ break-before: page; }}
   </style>
 </head>
 <body>
@@ -108,6 +128,7 @@ def markdown_to_html(md_text: str) -> str:
 </body>
 </html>"""
 
+    # 6) Compactar en una sola línea
     return " ".join(full_html.split())
 
 
@@ -119,55 +140,8 @@ def make_html():
 
     md_text = data["markdown"]
     html = markdown_to_html(md_text)
+
     return Response(html, mimetype="text/html")
-
-
-# -------- NUEVO: /html2pdf --------
-
-PAGE_BREAK_TOKEN = r"\[NUEVA PÁGINA\]"
-
-def normalize_html(raw_html: str) -> str:
-    # Limpia saltos de línea alrededor del marcador
-    cleaned = re.sub(r"\n*\s*\[NUEVA PÁGINA\]\s*\n*", "[NUEVA PÁGINA]", raw_html, flags=re.IGNORECASE)
-    # Sustituye marcador por salto real
-    return re.sub(PAGE_BREAK_TOKEN, '<div class="page-break"></div>', cleaned, flags=re.IGNORECASE)
-
-async def html_to_pdf_bytes(html: str) -> bytes:
-    from playwright.async_api import async_playwright
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(args=["--no-sandbox"])
-        page = await browser.new_page()
-        await page.set_content(html, wait_until="networkidle")
-        try:
-            await page.wait_for_function("window.MathJax && MathJax.typesetPromise", timeout=5000)
-            await page.evaluate("return MathJax.typesetPromise()")
-        except Exception:
-            pass
-        pdf_bytes = await page.pdf(
-            format="A4",
-            print_background=True,
-            margin={"top": "18mm", "bottom": "18mm", "left": "18mm", "right": "18mm"}
-        )
-        await browser.close()
-        return pdf_bytes
-
-@app.post("/html2pdf")
-def html2pdf():
-    data = request.get_json(silent=True)
-    if not data or "markdown" not in data:
-        return jsonify({"error": "Bad request: falta 'markdown'"}), 400
-
-    md_text = data["markdown"]
-    html = markdown_to_html(md_text)
-    html = normalize_html(html)
-
-    pdf_bytes = asyncio.run(html_to_pdf_bytes(html))
-    return send_file(
-        io.BytesIO(pdf_bytes),
-        mimetype="application/pdf",
-        as_attachment=True,
-        download_name="documento.pdf"
-    )
 
 
 # Render lo lanza con:
