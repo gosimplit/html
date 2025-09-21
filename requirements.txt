@@ -2,3 +2,4 @@ flask
 Markdown
 pymdown-extensions
 gunicorn
+playwright
